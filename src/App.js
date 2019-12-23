@@ -1,6 +1,6 @@
 import React, { Component } from 'react';
 import { Player } from 'broadwayjs';
-import Peer from 'peerjs';
+import SimplePeer from 'simple-peer';
 import './App.css';
 
 class App extends Component {
@@ -8,6 +8,7 @@ class App extends Component {
     data: null,
   }
   hidden = false;
+  initiator = window.location.hash === '#1';
 
   constructor() {
     super();
@@ -32,6 +33,9 @@ class App extends Component {
     this.framesList = [];
     this.running = false;
     this.shiftFrameTimeout = null;
+
+    this.peer = new SimplePeer({ initiator: this.initiator, trickle: false });
+    this.p2pBroker = null;
   }
 
   componentDidMount() {
@@ -46,22 +50,44 @@ class App extends Component {
       }
     });
 
-    const peer = new Peer();
-    peer.on('open', (id) => {
-      console.log(id);
-    })
+    this.connectToBroker('ws://192.168.1.215:9000/ws');
 
-    const conn = peer.connect('1');
-    conn.on('open', () => {
-      conn.send('hi');
+    this.peer.on('error', err => console.error('error', err));
+    
+    this.peer.on('signal', data => {
+      console.log('SIGNAL', JSON.stringify(data));
+      this.p2pBroker.send(JSON.stringify(data));
     });
 
-    peer.on('connection', (conn) => {
-      conn.on('data', (data) => {
-        console.log(data);
-      })
+    this.peer.on('connect', () => {
+      console.log('CONNECT');
+      this.peer.send('whatever ' + Math.random());
     });
-  }  
+
+    this.peer.on('data', data => {
+      console.log('data: ' + data);
+    });
+  }
+
+  connectToBroker = (url) => {
+    this.p2pBroker = new WebSocket(`${url}?initiator=${this.initiator}`);
+    this.p2pBroker.binaryType = 'arraybuffer';
+    this.p2pBroker.onopen = () => {
+      console.log(`Connected to broker ${url}`);
+    }
+
+    this.p2pBroker.onmessage = (evt) => {
+      console.log('received: ', evt.data);
+      // if (!this.initiator) {
+        this.peer.signal(JSON.parse(evt.data));
+        console.log('p2p connection established');
+      // }
+    }
+
+    this.p2pBroker.onclose = () => {
+      console.log('Disconnected from broker');
+    }
+  }
 
   shiftFrame = () => {
     if (!this.running)
